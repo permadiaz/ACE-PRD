@@ -1,72 +1,121 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI, Type, type Schema } from "@google/genai";
 
-// gemini-2.5-flash di-pensiun Google (404 untuk akun baru, shutdown Okt 2026).
-// Pengganti: gemini-3.5-flash — kecerdasan mendekati Pro di tier Flash.
+// gemini-2.5-flash di-pensiun Google. Pakai gemini-3.5-flash (model "thinking").
 const MODEL_NAME = "gemini-3.5-flash";
 
-function getClient(): GoogleGenerativeAI {
+function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
       "GEMINI_API_KEY belum di-set. Isi di .env.local (lokal) atau di Environment Variables dashboard Vercel."
     );
   }
-  return new GoogleGenerativeAI(apiKey);
+  return new GoogleGenAI({ apiKey });
 }
 
+/* ---------------- Skema Structured Output ---------------- */
+
+/** {"questions": ["...", "...", "...", "..."]} */
+export const QUESTIONS_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    questions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+  },
+  required: ["questions"],
+  propertyOrdering: ["questions"],
+};
+
+/** {prd:{...}, tasks:[{epic, items[]}], megaPrompt} */
+export const GENERATE_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    prd: {
+      type: Type.OBJECT,
+      properties: {
+        problemStatement: { type: Type.STRING },
+        targetUser: { type: Type.STRING },
+        coreFeatures: { type: Type.ARRAY, items: { type: Type.STRING } },
+        niceToHave: { type: Type.ARRAY, items: { type: Type.STRING } },
+        constraints: { type: Type.STRING },
+        successCriteria: { type: Type.STRING },
+      },
+      required: [
+        "problemStatement",
+        "targetUser",
+        "coreFeatures",
+        "niceToHave",
+        "constraints",
+        "successCriteria",
+      ],
+      propertyOrdering: [
+        "problemStatement",
+        "targetUser",
+        "coreFeatures",
+        "niceToHave",
+        "constraints",
+        "successCriteria",
+      ],
+    },
+    tasks: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          epic: { type: Type.STRING },
+          items: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ["epic", "items"],
+        propertyOrdering: ["epic", "items"],
+      },
+    },
+    megaPrompt: { type: Type.STRING },
+  },
+  required: ["prd", "tasks", "megaPrompt"],
+  propertyOrdering: ["prd", "tasks", "megaPrompt"],
+};
+
+/* ---------------- Pemanggilan model ---------------- */
+
 /**
- * Panggil Gemini dengan system prompt + user prompt.
- * Memaksa output JSON lewat responseMimeType.
+ * Panggil Gemini dengan system prompt + user prompt, output JSON terstruktur.
  *
- * Catatan: gemini-3.5-flash adalah model "thinking" — sebagian token output
- * dipakai untuk berpikir internal. maxOutputTokens harus longgar supaya JSON
- * akhir tidak kepotong (penyebab umum "gagal parse JSON").
+ * Catatan penting soal gemini-3.5-flash (model "thinking"):
+ * - maxOutputTokens itu budget BERSAMA (thinking + jawaban). Kalau kekecilan,
+ *   token habis buat mikir dan JSON kepotong -> gagal parse. Maka dibuat besar.
+ * - thinkingBudget dibatasi supaya proses mikir tidak menelan seluruh budget.
+ * - responseSchema memaksa struktur JSON sesuai yang app harapkan.
  */
 export async function callGemini(
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  responseSchema?: Schema
 ): Promise<string> {
-  const client = getClient();
-  const model = client.getGenerativeModel({
+  const ai = getClient();
+
+  const response = await ai.models.generateContent({
     model: MODEL_NAME,
-    systemInstruction: systemPrompt,
-    generationConfig: {
-      responseMimeType: "application/json",
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
       temperature: 0.7,
-      maxOutputTokens: 16384,
+      maxOutputTokens: 32768,
+      responseMimeType: "application/json",
+      ...(responseSchema ? { responseSchema } : {}),
+      thinkingConfig: { thinkingBudget: 4096 },
     },
   });
 
-  const result = await model.generateContent(userPrompt);
-  const response = result.response;
-
-  // Prompt diblokir filter keamanan?
-  const blockReason = response.promptFeedback?.blockReason;
-  if (blockReason) {
-    throw new Error(`Permintaan diblokir Gemini (alasan: ${blockReason}).`);
-  }
-
   const finishReason = response.candidates?.[0]?.finishReason;
-
-  let text = "";
-  try {
-    text = response.text();
-  } catch {
-    text = "";
-  }
+  const text = response.text;
 
   if (!text || text.trim().length === 0) {
     throw new Error(
       `Model tidak mengembalikan teks (finishReason: ${
         finishReason ?? "tidak diketahui"
-      }). Kemungkinan output kepotong karena kehabisan token — coba lagi.`
-    );
-  }
-
-  if (finishReason && finishReason !== "STOP") {
-    // Ada teks tapi finish tidak normal (mis. MAX_TOKENS) → JSON kemungkinan kepotong.
-    console.warn(
-      `callGemini: finishReason=${finishReason}, panjang teks=${text.length}`
+      }). Coba lagi.`
     );
   }
 
@@ -74,14 +123,12 @@ export async function callGemini(
 }
 
 /**
- * Parser JSON defensif. Meski sudah minta JSON murni, model kadang tetap
- * membungkus dengan markdown fence (```json ... ```) atau menambah teks lain.
- * Fungsi ini strip fence dan mengekstrak blok JSON sebelum JSON.parse.
+ * Parser JSON defensif. Dengan responseSchema, output sudah JSON bersih —
+ * tapi tetap kita strip fence & ekstrak blok JSON sebagai jaring pengaman.
  */
 export function parseJsonResponse<T>(raw: string): T {
   let text = (raw ?? "").trim();
 
-  // Strip markdown fence bila ada: ```json ... ``` atau ``` ... ```
   if (text.startsWith("```")) {
     text = text
       .replace(/^```(?:json)?\s*/i, "")
@@ -89,7 +136,6 @@ export function parseJsonResponse<T>(raw: string): T {
       .trim();
   }
 
-  // Ekstrak blok JSON: dari kurung pertama sampai pasangannya di akhir.
   if (!text.startsWith("{") && !text.startsWith("[")) {
     const firstBrace = text.indexOf("{");
     const lastBrace = text.lastIndexOf("}");
@@ -101,7 +147,6 @@ export function parseJsonResponse<T>(raw: string): T {
   try {
     return JSON.parse(text) as T;
   } catch {
-    // Log penuh ke server (kelihatan di Vercel logs) + cuplikan ke error UI.
     console.error("parseJsonResponse gagal. Raw response:\n", raw);
     const snippet = (raw ?? "").slice(0, 300).replace(/\s+/g, " ").trim();
     throw new Error(

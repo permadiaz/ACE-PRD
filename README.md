@@ -10,7 +10,7 @@ Prinsip desain: **kecepatan di atas kelengkapan.** Tulis brain dump → jawab 4 
 
 - Next.js 14 (App Router) + TypeScript
 - Tailwind CSS v4 (`@theme inline` token system)
-- Google Generative AI SDK (`@google/generative-ai`), model `gemini-2.5-flash`
+- Google Gen AI SDK (`@google/genai`), model `gemini-3.5-flash`, structured output (`responseSchema`)
 - Supabase (opsional) — simpan history PRD; app tetap jalan tanpa ini
 - Font: system font stack (tidak ada fetch font eksternal saat build)
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { callGemini, parseJsonResponse } from "@/lib/gemini";
+import { callGemini, parseJsonResponse, QUESTIONS_SCHEMA } from "@/lib/gemini";
 import { QUESTIONS_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export const runtime = "nodejs";
@@ -25,7 +25,8 @@ export async function POST(req: Request) {
   try {
     const raw = await callGemini(
       QUESTIONS_SYSTEM_PROMPT,
-      `Brain dump user:\n\n${brainDump}`
+      `Brain dump user:\n\n${brainDump}`,
+      QUESTIONS_SCHEMA
     );
     const parsed = parseJsonResponse<QuestionsResponse>(raw);
 

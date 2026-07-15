@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { callGemini, parseJsonResponse } from "@/lib/gemini";
+import { callGemini, parseJsonResponse, GENERATE_SCHEMA } from "@/lib/gemini";
 import { GENERATE_SYSTEM_PROMPT } from "@/lib/prompts";
 import type { GenerateResult } from "@/lib/types";
 
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
   const userPrompt = `Brain dump user:\n\n${brainDump}\n\n---\n\nJawaban klarifikasi:\n\n${qaBlock}`;
 
   try {
-    const raw = await callGemini(GENERATE_SYSTEM_PROMPT, userPrompt);
+    const raw = await callGemini(GENERATE_SYSTEM_PROMPT, userPrompt, GENERATE_SCHEMA);
     const parsed = parseJsonResponse<GenerateResult>(raw);
 
     if (!parsed.prd || !parsed.tasks || !parsed.megaPrompt) {
