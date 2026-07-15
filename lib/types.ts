@@ -24,3 +24,13 @@ export type QAPair = {
 };
 
 export type Stage = "dump" | "questions" | "loading" | "result";
+
+/** Baris tabel `prds` di Supabase (history PRD). */
+export type SavedPrd = {
+  id: string;
+  user_id: string | null;
+  brain_dump: string;
+  qa: QAPair[];
+  result: GenerateResult;
+  created_at: string;
+};

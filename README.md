@@ -11,7 +11,7 @@ Prinsip desain: **kecepatan di atas kelengkapan.** Tulis brain dump → jawab 4 
 - Next.js 14 (App Router) + TypeScript
 - Tailwind CSS v4 (`@theme inline` token system)
 - Google Generative AI SDK (`@google/generative-ai`), model `gemini-2.5-flash`
-- Tanpa database (state di client, single page)
+- Supabase (opsional) — simpan history PRD; app tetap jalan tanpa ini
 - Font: system font stack (tidak ada fetch font eksternal saat build)
 
 ## Setup lokal
@@ -53,7 +53,10 @@ prd-forge/
 ├── lib/
 │   ├── prompts.ts            # QUESTIONS_SYSTEM_PROMPT & GENERATE_SYSTEM_PROMPT
 │   ├── gemini.ts             # callGemini() + parseJsonResponse() defensif
+│   ├── supabase.ts           # client Supabase (graceful null kalau env kosong)
 │   └── types.ts              # tipe bersama
+├── supabase/
+│   └── schema.sql            # tabel prds + RLS (tempel ke Supabase SQL Editor)
 ├── .env.local.example
 └── README.md
 ```
@@ -65,6 +68,23 @@ prd-forge/
 | `POST /api/questions` | `{ brainDump: string }` | `{ questions: string[] }` |
 | `POST /api/generate` | `{ brainDump: string, qa: {question,answer}[] }` | `{ prd, tasks, megaPrompt }` |
 
+## Supabase (history PRD)
+
+Fitur riwayat menyimpan setiap hasil generate supaya bisa dibuka lagi. **Opsional** — kalau env Supabase tidak diisi, app tetap berfungsi penuh, cuma tanpa riwayat.
+
+Setup:
+
+1. Buat project di [supabase.com](https://supabase.com).
+2. Buka **SQL Editor** → tempel isi [`supabase/schema.sql`](./supabase/schema.sql) → **Run**. Ini bikin tabel `prds` + mengaktifkan Row Level Security (RLS).
+3. Buka **Settings → API**, salin **Project URL** dan **anon public** key.
+4. Isi di `.env.local` (lokal) dan di Environment Variables Vercel:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+Skema `prds`: `id uuid`, `user_id uuid` (nullable, disiapkan untuk auth nanti), `brain_dump text`, `qa jsonb`, `result jsonb`, `created_at timestamptz`.
+
+> **Fase personal vs publik:** `schema.sql` sekarang memakai policy yang mengizinkan `anon` penuh supaya langsung bisa dipakai sendiri tanpa login. Saat kamu menambah login + pembayaran nanti, ganti policy itu dengan versi per-user (`auth.uid() = user_id`) — blok SQL-nya sudah disiapkan (dikomentari) di bawah file yang sama.
+
 ## Catatan pengembangan
 
-Versi awal ini single-session — hasil generate tidak disimpan. Kalau nanti perlu history (buka project lama), tambahkan Supabase: table `prds` (`id uuid`, `brain_dump text`, `qa jsonb`, `result jsonb`, `created_at timestamptz`). Belum dibangun agar tetap ramping.
+- **Rencana bertahap:** fase sekarang dipakai sendiri (tanpa auth). Setelah puas, tambah layer login + gate pembayaran. Kolom `user_id` sudah disiapkan sejak awal supaya transisi itu mulus tanpa migrasi data.

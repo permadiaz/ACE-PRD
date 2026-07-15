@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import type { GenerateResult, QAPair, Stage } from "@/lib/types";
+import { useCallback, useEffect, useState } from "react";
+import type { GenerateResult, QAPair, SavedPrd, Stage } from "@/lib/types";
+import { getSupabase, isSupabaseEnabled } from "@/lib/supabase";
 
 type ResultTab = "prompt" | "prd" | "tasks";
+type SaveStatus = "idle" | "saving" | "saved" | "error" | "off";
+
+const HISTORY_ENABLED = isSupabaseEnabled();
 
 export default function Home() {
   const [stage, setStage] = useState<Stage>("dump");
@@ -15,6 +19,26 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const [history, setHistory] = useState<SavedPrd[]>([]);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>(
+    HISTORY_ENABLED ? "idle" : "off"
+  );
+
+  const loadHistory = useCallback(async () => {
+    const sb = getSupabase();
+    if (!sb) return;
+    const { data, error: e } = await sb
+      .from("prds")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (!e && data) setHistory(data as SavedPrd[]);
+  }, []);
+
+  useEffect(() => {
+    if (HISTORY_ENABLED) void loadHistory();
+  }, [loadHistory]);
+
   function reset() {
     setStage("dump");
     setBrainDump("");
@@ -24,6 +48,7 @@ export default function Home() {
     setTab("prompt");
     setError(null);
     setCopied(false);
+    setSaveStatus(HISTORY_ENABLED ? "idle" : "off");
   }
 
   async function fetchQuestions() {
@@ -50,6 +75,24 @@ export default function Home() {
     }
   }
 
+  async function saveToHistory(qa: QAPair[], generated: GenerateResult) {
+    const sb = getSupabase();
+    if (!sb) return;
+    setSaveStatus("saving");
+    const { error: e } = await sb.from("prds").insert({
+      brain_dump: brainDump,
+      qa,
+      result: generated,
+      // user_id sengaja dibiarkan NULL di fase personal.
+    });
+    if (e) {
+      setSaveStatus("error");
+      return;
+    }
+    setSaveStatus("saved");
+    void loadHistory();
+  }
+
   async function generate() {
     setError(null);
     setStage("loading");
@@ -65,13 +108,26 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal generate.");
-      setResult(data as GenerateResult);
+      const generated = data as GenerateResult;
+      setResult(generated);
       setTab("prompt");
       setStage("result");
+      if (HISTORY_ENABLED) void saveToHistory(qa, generated);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Terjadi kesalahan.");
       setStage("questions");
     }
+  }
+
+  function openSaved(item: SavedPrd) {
+    setBrainDump(item.brain_dump);
+    setQuestions(item.qa.map((q) => q.question));
+    setAnswers(item.qa.map((q) => q.answer));
+    setResult(item.result);
+    setTab("prompt");
+    setError(null);
+    setSaveStatus("saved");
+    setStage("result");
   }
 
   async function copyPrompt() {
@@ -100,6 +156,9 @@ export default function Home() {
           value={brainDump}
           onChange={setBrainDump}
           onNext={fetchQuestions}
+          historyEnabled={HISTORY_ENABLED}
+          history={history}
+          onOpen={openSaved}
         />
       )}
 
@@ -127,6 +186,7 @@ export default function Home() {
           setTab={setTab}
           onCopy={copyPrompt}
           copied={copied}
+          saveStatus={saveStatus}
         />
       )}
 
@@ -180,10 +240,16 @@ function DumpStage({
   value,
   onChange,
   onNext,
+  historyEnabled,
+  history,
+  onOpen,
 }: {
   value: string;
   onChange: (v: string) => void;
   onNext: () => void;
+  historyEnabled: boolean;
+  history: SavedPrd[];
+  onOpen: (item: SavedPrd) => void;
 }) {
   return (
     <section>
@@ -206,6 +272,28 @@ function DumpStage({
           Lanjut &rarr;
         </button>
       </div>
+
+      {historyEnabled && history.length > 0 && (
+        <div className="mt-10">
+          <Eyebrow>riwayat</Eyebrow>
+          <div className="flex flex-col gap-px bg-line">
+            {history.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onOpen(item)}
+                className="group flex items-center justify-between gap-4 bg-panel px-4 py-3 text-left transition-colors hover:bg-panel-raised"
+              >
+                <span className="line-clamp-1 flex-1 text-sm text-paper">
+                  {item.result?.prd?.problemStatement || item.brain_dump}
+                </span>
+                <span className="shrink-0 font-mono text-xs text-muted group-hover:text-accent">
+                  {formatDate(item.created_at)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -291,16 +379,21 @@ function ResultStage({
   setTab,
   onCopy,
   copied,
+  saveStatus,
 }: {
   result: GenerateResult;
   tab: ResultTab;
   setTab: (t: ResultTab) => void;
   onCopy: () => void;
   copied: boolean;
+  saveStatus: SaveStatus;
 }) {
   return (
     <section>
-      <Eyebrow>03 · hasil</Eyebrow>
+      <div className="mb-4 flex items-center justify-between">
+        <Eyebrow>03 · hasil</Eyebrow>
+        <SaveIndicator status={saveStatus} />
+      </div>
 
       <div className="mb-5 flex border border-line">
         <TabButton active={tab === "prompt"} onClick={() => setTab("prompt")}>
@@ -337,6 +430,27 @@ function ResultStage({
 
       {tab === "tasks" && <TasksView result={result} />}
     </section>
+  );
+}
+
+function SaveIndicator({ status }: { status: SaveStatus }) {
+  if (status === "off") return null;
+  const map: Record<Exclude<SaveStatus, "off">, string> = {
+    idle: "",
+    saving: "menyimpan…",
+    saved: "tersimpan ✓",
+    error: "gagal simpan",
+  };
+  const label = map[status as Exclude<SaveStatus, "off">];
+  if (!label) return null;
+  return (
+    <span
+      className={`font-mono text-xs ${
+        status === "error" ? "text-accent" : "text-muted"
+      }`}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -399,6 +513,19 @@ function TasksView({ result }: { result: GenerateResult }) {
 
 /* ---------- Small building blocks ---------- */
 
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
     <p className="mb-4 font-mono text-xs uppercase tracking-[0.2em] text-muted">
@@ -420,9 +547,7 @@ function TabButton({
     <button
       onClick={onClick}
       className={`flex-1 border-r border-line px-4 py-2.5 font-mono text-xs uppercase tracking-wider transition-colors last:border-r-0 ${
-        active
-          ? "bg-accent text-ink"
-          : "bg-panel text-muted hover:text-paper"
+        active ? "bg-accent text-ink" : "bg-panel text-muted hover:text-paper"
       }`}
     >
       {children}
