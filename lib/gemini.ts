@@ -88,6 +88,29 @@ export const GENERATE_SCHEMA: Schema = {
  * - thinkingBudget dibatasi supaya proses mikir tidak menelan seluruh budget.
  * - responseSchema memaksa struktur JSON sesuai yang app harapkan.
  */
+const MAX_ATTEMPTS = 3;
+
+/** Deteksi error jaringan sesaat yang layak di-retry ("fetch failed", dll). */
+function isTransient(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("fetch failed") ||
+    msg.includes("network") ||
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("aborted") ||
+    msg.includes("econnreset") ||
+    msg.includes("enotfound") ||
+    msg.includes("socket") ||
+    msg.includes("503") ||
+    msg.includes("502") ||
+    msg.includes("overloaded") ||
+    msg.includes("unavailable")
+  );
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function callGemini(
   systemPrompt: string,
   userPrompt: string,
@@ -95,31 +118,58 @@ export async function callGemini(
 ): Promise<string> {
   const ai = getClient();
 
-  const response = await ai.models.generateContent({
-    model: MODEL_NAME,
-    contents: userPrompt,
-    config: {
-      systemInstruction: systemPrompt,
-      temperature: 0.7,
-      maxOutputTokens: 32768,
-      responseMimeType: "application/json",
-      ...(responseSchema ? { responseSchema } : {}),
-      thinkingConfig: { thinkingBudget: 4096 },
-    },
-  });
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.7,
+          maxOutputTokens: 32768,
+          responseMimeType: "application/json",
+          ...(responseSchema ? { responseSchema } : {}),
+          thinkingConfig: { thinkingBudget: 4096 },
+        },
+      });
 
-  const finishReason = response.candidates?.[0]?.finishReason;
-  const text = response.text;
+      const finishReason = response.candidates?.[0]?.finishReason;
+      const text = response.text;
 
-  if (!text || text.trim().length === 0) {
-    throw new Error(
-      `Model tidak mengembalikan teks (finishReason: ${
-        finishReason ?? "tidak diketahui"
-      }). Coba lagi.`
-    );
+      if (!text || text.trim().length === 0) {
+        throw new Error(
+          `Model tidak mengembalikan teks (finishReason: ${
+            finishReason ?? "tidak diketahui"
+          }).`
+        );
+      }
+
+      return text;
+    } catch (err) {
+      lastErr = err;
+      // Hanya retry untuk kegagalan jaringan sesaat, dan bukan percobaan terakhir.
+      if (attempt < MAX_ATTEMPTS && isTransient(err)) {
+        console.warn(
+          `callGemini attempt ${attempt} gagal (${
+            err instanceof Error ? err.message : err
+          }), retry...`
+        );
+        await sleep(attempt * 700); // backoff bertahap: 700ms, 1400ms
+        continue;
+      }
+      break;
+    }
   }
 
-  return text;
+  // Semua percobaan gagal.
+  const detail = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  if (isTransient(lastErr)) {
+    throw new Error(
+      `Koneksi ke Gemini bermasalah sesaat (${detail}). Coba lagi sebentar.`
+    );
+  }
+  throw new Error(detail);
 }
 
 /**

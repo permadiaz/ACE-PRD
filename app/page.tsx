@@ -7,6 +7,15 @@ import { getSupabase, isSupabaseEnabled } from "@/lib/supabase";
 type ResultTab = "prompt" | "prd" | "tasks";
 type SaveStatus = "idle" | "saving" | "saved" | "error" | "off";
 
+/** Pesan error yang lebih ramah, khususnya untuk kegagalan jaringan di browser. */
+function friendlyError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|load failed|networkerror|network request failed|fetch failed/i.test(msg)) {
+    return "Koneksi bermasalah — cek internet kamu lalu coba lagi.";
+  }
+  return msg || "Terjadi kesalahan.";
+}
+
 const HISTORY_ENABLED = isSupabaseEnabled();
 
 export default function Home() {
@@ -70,7 +79,7 @@ export default function Home() {
       setAnswers(new Array(data.questions.length).fill(""));
       setStage("questions");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Terjadi kesalahan.");
+      setError(friendlyError(err));
       setStage("dump");
     }
   }
@@ -114,7 +123,7 @@ export default function Home() {
       setStage("result");
       if (HISTORY_ENABLED) void saveToHistory(qa, generated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Terjadi kesalahan.");
+      setError(friendlyError(err));
       setStage("questions");
     }
   }

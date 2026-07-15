@@ -4,6 +4,8 @@ import { GENERATE_SYSTEM_PROMPT } from "@/lib/prompts";
 import type { GenerateResult } from "@/lib/types";
 
 export const runtime = "nodejs";
+// Beri ruang waktu buat model "thinking" + retry (default Vercel Hobby ketat).
+export const maxDuration = 60;
 
 type QAPair = { question: string; answer: string };
 

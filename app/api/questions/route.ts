@@ -3,6 +3,8 @@ import { callGemini, parseJsonResponse, QUESTIONS_SCHEMA } from "@/lib/gemini";
 import { QUESTIONS_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export const runtime = "nodejs";
+// Beri ruang waktu buat model "thinking" + retry (default Vercel Hobby ketat).
+export const maxDuration = 60;
 
 type QuestionsResponse = { questions: string[] };
 
