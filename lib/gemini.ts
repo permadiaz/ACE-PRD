@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const MODEL_NAME = "gemini-2.5-flash";
+// gemini-2.5-flash di-pensiun Google (404 untuk akun baru, shutdown Okt 2026).
+// Pengganti: gemini-3.5-flash — kecerdasan mendekati Pro di tier Flash.
+const MODEL_NAME = "gemini-3.5-flash";
 
 function getClient(): GoogleGenerativeAI {
   const apiKey = process.env.GEMINI_API_KEY;
