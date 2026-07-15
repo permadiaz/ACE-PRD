@@ -17,6 +17,10 @@ function getClient(): GoogleGenerativeAI {
 /**
  * Panggil Gemini dengan system prompt + user prompt.
  * Memaksa output JSON lewat responseMimeType.
+ *
+ * Catatan: gemini-3.5-flash adalah model "thinking" — sebagian token output
+ * dipakai untuk berpikir internal. maxOutputTokens harus longgar supaya JSON
+ * akhir tidak kepotong (penyebab umum "gagal parse JSON").
  */
 export async function callGemini(
   systemPrompt: string,
@@ -29,28 +33,63 @@ export async function callGemini(
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0.7,
+      maxOutputTokens: 16384,
     },
   });
 
   const result = await model.generateContent(userPrompt);
-  return result.response.text();
+  const response = result.response;
+
+  // Prompt diblokir filter keamanan?
+  const blockReason = response.promptFeedback?.blockReason;
+  if (blockReason) {
+    throw new Error(`Permintaan diblokir Gemini (alasan: ${blockReason}).`);
+  }
+
+  const finishReason = response.candidates?.[0]?.finishReason;
+
+  let text = "";
+  try {
+    text = response.text();
+  } catch {
+    text = "";
+  }
+
+  if (!text || text.trim().length === 0) {
+    throw new Error(
+      `Model tidak mengembalikan teks (finishReason: ${
+        finishReason ?? "tidak diketahui"
+      }). Kemungkinan output kepotong karena kehabisan token — coba lagi.`
+    );
+  }
+
+  if (finishReason && finishReason !== "STOP") {
+    // Ada teks tapi finish tidak normal (mis. MAX_TOKENS) → JSON kemungkinan kepotong.
+    console.warn(
+      `callGemini: finishReason=${finishReason}, panjang teks=${text.length}`
+    );
+  }
+
+  return text;
 }
 
 /**
  * Parser JSON defensif. Meski sudah minta JSON murni, model kadang tetap
- * membungkus dengan markdown fence (```json ... ```). Fungsi ini strip fence
- * itu sebagai fallback sebelum JSON.parse.
+ * membungkus dengan markdown fence (```json ... ```) atau menambah teks lain.
+ * Fungsi ini strip fence dan mengekstrak blok JSON sebelum JSON.parse.
  */
 export function parseJsonResponse<T>(raw: string): T {
-  let text = raw.trim();
+  let text = (raw ?? "").trim();
 
   // Strip markdown fence bila ada: ```json ... ``` atau ``` ... ```
   if (text.startsWith("```")) {
-    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    text = text.trim();
+    text = text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
   }
 
-  // Fallback terakhir: ambil dari kurung kurawal pertama sampai terakhir.
+  // Ekstrak blok JSON: dari kurung pertama sampai pasangannya di akhir.
   if (!text.startsWith("{") && !text.startsWith("[")) {
     const firstBrace = text.indexOf("{");
     const lastBrace = text.lastIndexOf("}");
@@ -62,6 +101,13 @@ export function parseJsonResponse<T>(raw: string): T {
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error("Gagal parse respons AI sebagai JSON. Coba lagi.");
+    // Log penuh ke server (kelihatan di Vercel logs) + cuplikan ke error UI.
+    console.error("parseJsonResponse gagal. Raw response:\n", raw);
+    const snippet = (raw ?? "").slice(0, 300).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Gagal parse respons AI sebagai JSON. Cuplikan: ${
+        snippet || "(respons kosong)"
+      }`
+    );
   }
 }
