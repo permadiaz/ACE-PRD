@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/*
+ * Raw design tokens live in :root sebagai CSS custom properties nyata,
+ * lalu dipetakan ke Tailwind lewat `@theme inline`. Pola ini bikin:
+ *  - utility class (bg-ink, text-paper, border-line, dst) tersedia, dan
+ *  - var(--ink) dkk tetap bisa dipakai langsung di CSS kustom di bawah.
+ */
+:root {
+  --ink: #12141a; /* background utama */
+  --panel: #1a1d25; /* card/panel */
+  --panel-raised: #21252f;
+  --line: #2a2e38; /* border */
+  --paper: #e8e6e1; /* teks utama */
+  --muted: #8b8f9c; /* teks sekunder/label */
+  --accent: #e8823c; /* aksen oranye — "coretan pensil" */
+  --accent-dim: #6b4726;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
+  --color-line: var(--line);
+  --color-paper: var(--paper);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius: 0px;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-sans);
+  /* grain halus: radial dot pattern */
+  background-image: radial-gradient(var(--paper) 0.5px, transparent 0.5px);
+  background-size: 4px 4px;
+  background-attachment: fixed;
+}
+
+/* Overlay agar dot terlihat sangat halus (opacity efektif ~0.035) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-color: var(--ink);
+  opacity: 0.965;
+  z-index: -1;
+  pointer-events: none;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--ink);
+}
+
+/* Scrollbar bernuansa terminal */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.dot-blink {
+  animation: blink 1.2s infinite;
+}
